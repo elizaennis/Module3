@@ -1,0 +1,149 @@
+---
+title: "Module 3 Project"
+format: html
+editor: visual
+---
+
+## Quarto
+
+Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
+
+```{r}
+#! label: load-packages
+#! include: false
+
+library(tidyverse)
+library(palmerpenguins)
+library(arsenal)
+library(dplyr)
+library(readr)
+library(table1)
+library(quarto)
+```
+
+## Introduction
+
+We begin with a simulated data set of 5000 observations, each assigned 5 characteristics (smoker status, sex, age, cardiac condition, and cost).
+
+We established cost as our response / dependent variable and female, smoke, age, and cardiac as our predictor variables. Smoke, female, and cardiac are binary, while age and cost are continuous. Based on our initial look at the data, we can see that 10.2% of the observations are of non-smokers, 48.7% are female, 3.8% have a cardiac condition, and the average age is 41.5 with a standard deviation of 13.5 years and an approximately uniform distribution between ages 18-65. For costs, we can see that costs are approximately normally distributed, and the mean cost is \$9,670. When cost is made into a categorical variable, we find that 3.8% of observations fall below \$9,000, 76.5% between \~\$9,000-\$10,000, and the remaining 19.9% are above \$10,000.
+
+Using this data set, we will then use several different methods to identify the association between each of the predictor variables and costs.
+
+```{r}
+#! label: load-data-and-make-table-1
+#! include: false
+
+# Read in simulated data
+current_dir <- getwd()
+data_path <- "cohort.csv"
+output_path <- "output.csv"
+data <- read.csv(data_path)
+
+# Get information about data
+str(data)
+hist(data$age)
+min(data$age)
+max(data$age)
+hist(data$cost)
+
+#Reformat data to work for table 1
+max(data$cost)
+median(data$cost)
+min(data$cost)
+data$cost_cat <- 0
+data$cost_cat <- ifelse(data$cost > 10000, "C: >$10,000",
+                        ifelse(data$cost <= 10000 & data$cost >= 9000, "B: $9000-$9999",
+                               ifelse(data$cost < 9000 & data$cost >= 8000, "A: $8000-$8999", "<$8000")))
+table(data$cost_cat)
+data$cost_cat <- as.factor(data$cost_cat)
+data <- data %>%
+  mutate(smoke = case_when(
+    smoke == 1 ~ "smoker",
+    smoke == 0 ~ "non-smoker",
+    TRUE ~ NA_character_
+  )) %>%
+  mutate(sex = case_when(
+    female == 1 ~ "female",
+    female == 0 ~ "male",
+    TRUE ~ NA_character_
+  )) %>%
+  mutate(cardiac = case_when(
+    cardiac == 1 ~ "cardiac_condition",
+    cardiac == 0 ~ "no_condition",
+    TRUE ~ NA_character_
+  )) %>%
+  select (smoke,sex,age,cardiac,cost,cost_cat)
+
+#Make Table 1
+(Table1 <- table1(~ smoke + sex + age + cardiac + cost + cost_cat, data=data))
+```
+
+## Methods
+My exploration of the association between smoking, sex, age, and history of cardiac condition and costs began with getting a general understanding of the data by calculating means, medians, standard deviations, and distribution types for continous variables and the percentage of observations fitting each characteristic for categorical variables. I then looked at the proportion of each predictor variable that fell into cost categories to get a sense of potential associations. Then, I used a linear regression model with cost as a continuous outcome variable to identify the dollar increases associated with a change in each predictor variable. To better understand the odds ratios and relative impact of each, I also ran a generalized linear model (glm) using "high" and "low" cost categories divided at the median cost. We can use lm and glm methods because we can assume a linear correlation between the variables.
+
+## Results
+We find that smoking, male sex, older age, and history of cardiac condition are all associated with higher costs. More specifically, using a basic linear regression model, we find that one additional year of age is associated with an \$18 increase in costs, being a smoker is associated with a \$593 increase in costs, being male is associated with a \$294 increase in costs, and having a cardiac condition is associated with a $289 increase in costs. Accounting for interactions between the predictor variables, the increase in costs associated with smoking is just \$504 while being male is associated with increasing costs by \$308 and having a cardiac condition is associated with increased costs of \$309. Among the predictor variables in the model, smoking status exhibited the highest odds ratio with categorical high/low cost. Between predictor variables, the greatest correlation is between smoking and cardiac history and the second is between male sex and cardiac history.
+
+```{r}
+#! label: analyze_data
+#! include: false
+
+#Relevel data
+data$cardiac <- as.factor(data$cardiac)
+data$cardiac <- relevel(data$cardiac, ref = "no_condition")
+data$sex <- as.factor(data$sex)
+data$sex <- relevel(data$sex, ref = "male")
+data$smoke <- as.factor(data$smoke)
+data$smoke <- relevel(data$smoke, ref = "non-smoker")
+
+#Build table demonstrating differences in predictor values by cost
+(Table2 <- table1(~ smoke + sex + age + cardiac | cost_cat, data=data))
+
+#Build linear regression model to determine variable relationships with cost as continuous outcome
+(model1 <- lm(cost ~ age + smoke + sex + cardiac, data = data))
+(model1_interaction <- lm(cost ~ age * smoke * sex * cardiac, data = data))
+summary(model1_interaction)
+
+#Build a figure with all variables
+(Figure1 <- ggplot(data, aes(x = age, y = cost, color = smoke, shape = sex,linetype = cardiac)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(
+    title = "Cost and Age by Smoke Status and Gender and Cardiac History",
+    color = "Smoke status",
+    shape = "Gender", 
+    linetype = "Cardiac History"
+  ) +
+  scale_color_discrete(labels = c("No Smoke", "Smoke")) +
+  scale_shape_discrete(labels = c("Male", "Female")) +
+  scale_linetype_discrete(labels = c("No Cardiac History", "Cardiac History")) +
+  theme_minimal())
+
+#Analyze with cost as binary outcome (above/below median) to calculate odds ratios
+data$cost_highlow <- 0
+data$cost_highlow <- ifelse(data$cost > median(data$cost), 1, 0)
+(model2 <- glm(cost_highlow ~ sex + age + smoke + cardiac, data = data, family = binomial(link = "logit")))
+coef_summary <- summary(model2)$coefficients
+
+# Calculate odds ratios and their confidence intervals
+odds_ratios <- exp(coef_summary[, "Estimate"])
+ci_lower <- exp(coef_summary[, "Estimate"] - 1.96 * coef_summary[, "Std. Error"])
+ci_upper <- exp(coef_summary[, "Estimate"] + 1.96 * coef_summary[, "Std. Error"])
+
+# Combine results into a data frame
+odds_ratios_df <- data.frame(
+  OddsRatio = odds_ratios,
+  LowerCI = ci_lower,
+  UpperCI = ci_upper,
+  Predictor = rownames(coef_summary)
+)
+
+# Plot odds ratios and confidence intervals
+(Figure2 <- ggplot(odds_ratios_df, aes(x = OddsRatio, y = Predictor)) +
+  geom_point() +
+  geom_errorbarh(aes(xmin = LowerCI, xmax = UpperCI), height = 0) +
+  geom_vline(xintercept = 1, linetype = "dashed") +
+  labs(x = "Odds Ratio", y = "Predictor", title = "Odds Ratios and 95% Confidence Intervals") +
+  theme_bw())
+
+```
